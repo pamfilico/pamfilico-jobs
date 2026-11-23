@@ -1,0 +1,26 @@
+[tool.poetry]
+name = "pamfilico-jobs"
+version = "0.1.0"
+description = "Python SDK for jobs, the central job plane: declare tasks, trigger runs, run workers, verify webhooks"
+authors = ["Pamfilico"]
+license = "MIT"
+readme = "README.md"
+packages = [{ include = "pamfilico_jobs" }]
+
+[tool.poetry.dependencies]
+python = "^3.10"
+requests = ">=2.28"
+croniter = { version = ">=1.4", optional = true }
+
+[tool.poetry.extras]
+cron = ["croniter"]
+
+[tool.poetry.group.dev.dependencies]
+pytest = ">=7.0"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"
