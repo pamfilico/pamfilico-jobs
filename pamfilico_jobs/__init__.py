@@ -11,7 +11,7 @@
     jobs.trigger("core.reports.build", {"month": "2026-11"}, client_id=cid, subject=f"report:{cid}")
     jobs.worker("core", slots=10).discover("app.domains").start()     # in worker_jobs.py
 
-Docs: https://gitlab.com/pamfilico/jobs (docs/INTEGRATING.md).
+Docs: https://github.com/pamfilico/pamfilico-jobs
 """
 
 from pamfilico_jobs._version import __version__

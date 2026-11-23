@@ -1,11 +1,15 @@
 [tool.poetry]
 name = "pamfilico-jobs"
-version = "0.2.1"
+version = "0.2.2"
 description = "Python SDK for jobs, the central job plane: declare tasks, trigger runs, run workers, verify webhooks"
 authors = ["Pamfilico"]
 license = "MIT"
 readme = "README.md"
 packages = [{ include = "pamfilico_jobs" }]
+include = ["pamfilico_jobs/py.typed"]
+homepage = "https://github.com/pamfilico/pamfilico-jobs"
+repository = "https://github.com/pamfilico/pamfilico-jobs"
+keywords = ["jobs", "background-jobs", "task-queue", "workers", "cron", "webhooks"]
 
 [tool.poetry.dependencies]
 python = "^3.10"
