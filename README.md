@@ -1,3 +1,5 @@
+<img src="logo.svg" alt="" width="56" align="left">
+
 # pamfilico-jobs
 
 Python SDK for **jobs**, the central job plane: declare tasks next to your code, start runs from
