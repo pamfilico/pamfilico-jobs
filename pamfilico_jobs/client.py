@@ -161,11 +161,15 @@ class Jobs:
         delay=None,
         run_at=None,
         parent_run_id: str | None = None,
+        trace_id: str | None = None,
     ) -> Run:
         """Queue a run of `task` (any app's). Same `key` → the same run back (`run.deduplicated`).
 
         delay   "30s" / "10m" / seconds: not claimable before then
         run_at  a datetime (or ISO string): not claimable before that moment
+        trace_id  continue an existing trace from outside a task (e.g. a web request that resumes
+                  a flow: store the trace id on your row, pass it back here). Inside a task the
+                  trace is joined automatically.
         """
         if self.inline:
             return self._inline_runner().trigger(
@@ -182,6 +186,7 @@ class Jobs:
             "delay_s": seconds(delay),
             "run_at": run_at.isoformat() if hasattr(run_at, "isoformat") else run_at,
             "parent_run_id": parent_run_id,
+            "trace_id": trace_id,
         }
         ctx = _ctx.current()
         if ctx is not None and not parent_run_id:
@@ -191,7 +196,7 @@ class Jobs:
         payload = self.http.request("POST", "/runs", json_body=body, attempts=3 if key else 1)
         return Run(payload["data"])
 
-    def emit(self, name: str, payload: dict | None = None, *, client_id=None, subject=None, user_id=None) -> list[Run]:
+    def emit(self, name: str, payload: dict | None = None, *, client_id=None, subject=None, user_id=None, trace_id=None) -> list[Run]:
         """Emit an event: every task whose `on_events` matches starts a run. Returns those runs."""
         if self.inline:
             return self._inline_runner().emit(name, payload, client_id=client_id, subject=subject, user_id=user_id)
@@ -202,6 +207,7 @@ class Jobs:
             json_body={
                 "name": name, "payload": payload or {}, "client_id": _s(client_id), "subject": _s(subject),
                 "user_id": _s(user_id), "source_run_id": ctx.run_id if ctx is not None else None,
+                "trace_id": trace_id,
             },
         )["data"]
         return [Run(r) for r in data.get("runs", [])]

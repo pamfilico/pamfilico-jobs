@@ -170,3 +170,17 @@ def test_money_tasks_default_to_no_retries_and_a_required_key():
         return {}
 
     assert safe.task.idempotent and safe.task.retries == 3 and not safe.task.require_key
+
+
+def test_one_function_can_serve_two_task_names_with_different_policies():
+    j = make()
+
+    @j.task("crawlfast.serper.fetch", retries=3)
+    @j.task("crawlfast.serper.fetch_leads", retries=3, concurrency=2)
+    def fetch(inp, ctx):
+        return {"q": inp["q"]}
+
+    assert j.registry.get("crawlfast.serper.fetch").concurrency is None
+    assert j.registry.get("crawlfast.serper.fetch_leads").concurrency == 2
+    assert j.trigger("crawlfast.serper.fetch_leads", {"q": "x"}).output == {"q": "x"}
+    assert j.trigger("crawlfast.serper.fetch", {"q": "y"}).output == {"q": "y"}

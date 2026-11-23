@@ -5,7 +5,7 @@ anywhere, run a worker in your own app, verify jobs' webhooks. jobs keeps the li
 worker does the work, with your code and your database.
 
 ```bash
-poetry add git+https://github.com/pamfilico/pamfilico-jobs.git#v0.2.0
+poetry add git+https://github.com/pamfilico/pamfilico-jobs.git#v0.2.1
 ```
 
 ```python
