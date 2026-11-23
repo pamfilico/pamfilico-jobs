@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "pamfilico-jobs"
-version = "0.1.0"
+version = "0.2.0"
 description = "Python SDK for jobs, the central job plane: declare tasks, trigger runs, run workers, verify webhooks"
 authors = ["Pamfilico"]
 license = "MIT"

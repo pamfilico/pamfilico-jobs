@@ -5,7 +5,7 @@ anywhere, run a worker in your own app, verify jobs' webhooks. jobs keeps the li
 worker does the work, with your code and your database.
 
 ```bash
-poetry add git+https://github.com/pamfilico/pamfilico-jobs.git#v0.1.0
+poetry add git+https://github.com/pamfilico/pamfilico-jobs.git#v0.2.0
 ```
 
 ```python
@@ -18,7 +18,10 @@ def build(inp, ctx):
         raise NonRetryable("month is required")       # fail now, no retries
     return {"report_id": 42}                           # small JSON: a reference, not the data
 
-@jobs.task("core.reports.tick", cron="*/5 * * * *")    # a cron; ticks never overlap
+@jobs.task("core.reports.tick", cron="*/5 * * * *", queue_ttl="4m")   # a cron; ticks never overlap, stale ones expire
+
+@jobs.task("core.billing.charge", idempotent=False, retention="400d")  # costs money: key required,
+def charge(inp, ctx): ...                                                # never auto-retried when the outcome is unknown
 def tick(inp, ctx): ...
 
 @jobs.task("core.parent.go")
@@ -31,6 +34,8 @@ run = jobs.wait(run.id, timeout=60)        # run.status, run.output, run.error, 
 jobs.emit("core.lead.crawled", {"lead_id": 7}, client_id="c1")
 jobs.runs(task="core.reports.*", status="failed", client_id="c1")
 jobs.cancel(run.id); jobs.retry(run.id)
+jobs.trigger("core.billing.charge", {"order_id": 7}, key="charge:7")   # same key → same run
+jobs.trace(run.id)                         # everything this action caused, across apps
 ```
 
 Worker (one process; `slots` runs at once):

@@ -28,6 +28,8 @@ class Context:
         self.key = run.get("key")
         self.parent_run_id = run.get("parent_run_id")
         self.root_run_id = run.get("root_run_id")
+        self.trace_id = run.get("trace_id")
+        self.source_run_id = run.get("source_run_id")
         self.trigger_kind = run.get("trigger_kind")
         self.input = run.get("input") or {}
         self._on_progress = on_progress

@@ -146,3 +146,27 @@ def test_remote_mode_needs_configuration(monkeypatch):
     with pytest.raises(JobsError) as e:
         j.trigger("core.x.y", {})
     assert e.value.code == "not_configured"
+
+
+def test_money_tasks_default_to_no_retries_and_a_required_key():
+    j = make()
+
+    @j.task("core.billing.charge", idempotent=False, retention="90d", queue_ttl="10m")
+    def charge(inp, ctx):
+        return {}
+
+    d = charge.task.definition()
+    assert d["idempotent"] is False and d["require_key"] is True and d["retries"] == 0
+    assert d["retention_s"] == 90 * 86400 and d["queue_ttl_s"] == 600
+
+    @j.task("core.billing.refund", idempotent=False, retries=2, require_key=False)
+    def refund(inp, ctx):
+        return {}
+
+    assert refund.task.retries == 2 and refund.task.require_key is False
+
+    @j.task("core.math.safe")
+    def safe(inp, ctx):
+        return {}
+
+    assert safe.task.idempotent and safe.task.retries == 3 and not safe.task.require_key

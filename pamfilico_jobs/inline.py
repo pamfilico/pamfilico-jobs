@@ -99,6 +99,9 @@ class InlineRunner:
         return run
 
     def trigger(self, task, input=None, *, client_id=None, subject=None, user_id=None, key=None, parent_run_id=None, trigger_kind=None):
+        tdef = self.jobs.registry.get(task)
+        if tdef is not None and tdef.require_key and key is None and not parent_run_id:
+            raise JobsError(400, "key_required", f"{task} is not idempotent: pass an idempotency key")
         if key is not None and (task, key) in self.keys:
             existing = dict(self.store[self.keys[(task, key)]])
             existing["deduplicated"] = True

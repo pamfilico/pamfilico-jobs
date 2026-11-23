@@ -56,5 +56,6 @@ _KNOWN = {
     "subject", "user_id", "key", "parent_run_id", "root_run_id", "retry_of", "event_id",
     "schedule_id", "progress", "progress_message", "cancel_requested", "worker_id", "sequence",
     "available_at", "created_at", "started_at", "finished_at", "updated_at", "duration_s",
-    "claim_token", "lease_expires_at",
+    "claim_token", "lease_expires_at", "dedup_hits", "idempotent", "trace_id", "source_run_id",
+    "deadline_at", "expires_at", "needs_review", "reviewed_at", "reviewed_by", "review_note", "lease_s",
 }

@@ -88,12 +88,16 @@ class Jobs:
         fair_by: str | None = None,
         one_open_per: str | None = None,
         timeout="10m",
-        retries: int = 3,
+        retries: int | None = None,
         backoff=None,
         labels: dict | None = None,
         concurrency: int | None = None,
         priority: int = 0,
         description: str | None = None,
+        idempotent: bool = True,
+        require_key: bool | None = None,
+        retention=None,
+        queue_ttl=None,
     ) -> Callable:
         """Declare a task. The function stays a plain function (call it directly in unit tests).
 
@@ -107,6 +111,13 @@ class Jobs:
         labels        worker labels this task needs, e.g. {"gpu": "true"}
         concurrency   at most N running at once, across every worker
         priority      higher first
+        idempotent    False = running it twice has a cost (a charge, an email, a paid call):
+                      triggers must pass a key, retries default to 0, and if a worker dies or
+                      times out mid-run the run is NOT retried: it fails as `outcome_unknown`
+                      and shows up in the console under "Needs review"
+        require_key   refuse triggers without a key (default: True when not idempotent)
+        retention     how long the finished run's record is kept ("7d"; default: the server's)
+        queue_ttl     how long a run may wait for a worker before it expires unrun ("10m")
         """
 
         def decorator(fn):
@@ -124,6 +135,10 @@ class Jobs:
                 concurrency=concurrency,
                 priority=priority,
                 description=description,
+                idempotent=idempotent,
+                require_key=require_key,
+                retention=retention,
+                queue_ttl=queue_ttl,
             )
             self.registry.add(tdef)
             fn.task = tdef
@@ -168,6 +183,10 @@ class Jobs:
             "run_at": run_at.isoformat() if hasattr(run_at, "isoformat") else run_at,
             "parent_run_id": parent_run_id,
         }
+        ctx = _ctx.current()
+        if ctx is not None and not parent_run_id:
+            # Triggered from inside a task: the new run joins this run's trace.
+            body["source_run_id"] = ctx.run_id
         # Retrying a trigger is only safe when it is idempotent.
         payload = self.http.request("POST", "/runs", json_body=body, attempts=3 if key else 1)
         return Run(payload["data"])
@@ -176,10 +195,14 @@ class Jobs:
         """Emit an event: every task whose `on_events` matches starts a run. Returns those runs."""
         if self.inline:
             return self._inline_runner().emit(name, payload, client_id=client_id, subject=subject, user_id=user_id)
+        ctx = _ctx.current()
         data = self.http.request(
             "POST",
             "/events",
-            json_body={"name": name, "payload": payload or {}, "client_id": _s(client_id), "subject": _s(subject), "user_id": _s(user_id)},
+            json_body={
+                "name": name, "payload": payload or {}, "client_id": _s(client_id), "subject": _s(subject),
+                "user_id": _s(user_id), "source_run_id": ctx.run_id if ctx is not None else None,
+            },
         )["data"]
         return [Run(r) for r in data.get("runs", [])]
 
@@ -253,6 +276,13 @@ class Jobs:
             return self._inline_runner().trigger(old.task, input or old.input, client_id=old.client_id, subject=old.subject, user_id=old.user_id)
         body = {"input": input} if input is not None else {}
         return Run(self.http.request("POST", f"/runs/{run_id}/retry", json_body=body)["data"])
+
+    def trace(self, trace_or_run_id: str) -> dict:
+        """Everything one action caused, across apps: runs (with their history), the events
+        between them and the webhook deliveries. Pass a trace id or any run id in it."""
+        if self.inline:
+            return {"trace_id": trace_or_run_id, "runs": [r.raw for r in self._inline_runner().runs(limit=1000)]}
+        return self.http.request("GET", f"/traces/{trace_or_run_id}", attempts=3)["data"]
 
     def whoami(self) -> dict:
         return self.http.request("GET", "/whoami", attempts=3)["data"]

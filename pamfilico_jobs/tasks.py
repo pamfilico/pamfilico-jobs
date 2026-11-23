@@ -26,6 +26,10 @@ class TaskDef:
     concurrency: int | None = None
     priority: int = 0
     description: str | None = None
+    idempotent: bool = True
+    require_key: bool = False
+    retention_s: int | None = None
+    queue_ttl_s: int | None = None
 
     @property
     def app(self) -> str:
@@ -62,6 +66,10 @@ class TaskDef:
             "concurrency": self.concurrency,
             "priority": self.priority,
             "description": self.description,
+            "idempotent": self.idempotent,
+            "require_key": self.require_key,
+            "retention_s": self.retention_s,
+            "queue_ttl_s": self.queue_ttl_s,
         }
 
 
@@ -95,12 +103,16 @@ def make_task(
     fair_by=None,
     one_open_per=None,
     timeout="10m",
-    retries=3,
+    retries=None,
     backoff=None,
     labels=None,
     concurrency=None,
     priority=0,
     description=None,
+    idempotent=True,
+    require_key=None,
+    retention=None,
+    queue_ttl=None,
 ) -> TaskDef:
     if not TASK_NAME.match(name or ""):
         raise ValueError(f"bad task name {name!r}: use <app>.<domain>.<action>, lowercase")
@@ -121,6 +133,9 @@ def make_task(
         except ImportError:
             pass
     timeout_s = int(seconds(timeout) or 600)
+    if retries is None:
+        # A task that costs money is not retried unless you say so.
+        retries = 3 if idempotent else 0
     backoff_s = [int(seconds(b)) for b in backoff] if backoff else None
     doc = (description or (fn.__doc__ or "").strip().split("\n")[0] or None)
     return TaskDef(
@@ -137,4 +152,8 @@ def make_task(
         concurrency=int(concurrency) if concurrency else None,
         priority=int(priority or 0),
         description=doc,
+        idempotent=bool(idempotent),
+        require_key=bool(require_key) if require_key is not None else not idempotent,
+        retention_s=int(seconds(retention)) if retention else None,
+        queue_ttl_s=int(seconds(queue_ttl)) if queue_ttl else None,
     )
