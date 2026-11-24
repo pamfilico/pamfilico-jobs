@@ -11,6 +11,17 @@ class JobsError(Exception):
         self.message = message
 
 
+class LimitReached(JobsError):
+    """A trigger refused because the client already has ``max_open`` open runs of that task.
+
+    Nothing was queued. It is not a failure of jobs: it is the limit you asked for, working.
+    Catch it and try again later (the next tick), or skip.
+    """
+
+    def __init__(self, message: str):
+        super().__init__(409, "limit_reached", message)
+
+
 class JobsUnavailable(JobsError):
     """jobs could not be reached (network error, timeout, 5xx)."""
 

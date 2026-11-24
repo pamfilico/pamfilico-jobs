@@ -18,6 +18,7 @@ from pamfilico_jobs._version import __version__
 from pamfilico_jobs.client import Jobs
 from pamfilico_jobs.context import Context, current
 from pamfilico_jobs.errors import (
+    LimitReached,
     Cancelled,
     ChildRunFailed,
     InvalidSignature,
@@ -45,6 +46,7 @@ __all__ = [
     "WaitTimeout",
     "JobsError",
     "JobsUnavailable",
+    "LimitReached",
     "InvalidSignature",
     "__version__",
 ]

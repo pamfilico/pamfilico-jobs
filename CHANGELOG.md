@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.2.5
+- `trigger(..., max_open=N)`: refuse the trigger when the client already has N open runs of the task.
+  The server counts and queues under one lock (no race); the SDK raises `LimitReached` (409
+  `limit_reached`) and nothing is queued. Needs `client_id`. Inline mode honours it too.
+- `jobs.supports(feature)`: whether the server supports a feature (`"max_open"`), asked once via
+  `/whoami` → `features`. An older server answers False.
+- README: `max_open`, and a tutorial — a self-limiting feeder (cron + worker + `max_open`).
+
 ## 0.2.4
 - `cron_string=`: the fixed schedule (`cron=` is its old name and still works).
 - `cron_callable=`: a function returning the schedule (a cron string, or `None` for none). The worker

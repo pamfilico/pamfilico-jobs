@@ -7,7 +7,7 @@ import time
 
 import requests
 
-from pamfilico_jobs.errors import JobsError, JobsUnavailable
+from pamfilico_jobs.errors import JobsError, JobsUnavailable, LimitReached
 
 logger = logging.getLogger("pamfilico_jobs")
 
@@ -63,6 +63,8 @@ class Transport:
                         payload = resp.json()
                     except ValueError:
                         payload = {"error": True, "code": "bad_response", "message": resp.text[:300]}
+                    if resp.status_code == 409 and payload.get("code") == "limit_reached":
+                        raise LimitReached(str(payload.get("message") or payload.get("ui_message") or "limit reached"))
                     if resp.status_code >= 400 or payload.get("error"):
                         raise JobsError(
                             resp.status_code,

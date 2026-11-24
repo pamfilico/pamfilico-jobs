@@ -34,8 +34,13 @@ from pamfilico_jobs.transport import Transport
 SERVER_WAIT_S = 20
 
 
+#: What the inline runner implements (tests): everything the SDK can ask the server for.
+INLINE_FEATURES = frozenset({"max_open"})
+
+
 class Jobs:
     def __init__(self, url: str | None = None, key: str | None = None, mode: str | None = None):
+        self._features: set | None = None  # supports(): the server's features, asked once
         self.registry = Registry()
         self._url, self._key, self._mode = url, key, mode
         self._transport: Transport | None = None
@@ -206,8 +211,23 @@ class Jobs:
         run_at=None,
         parent_run_id: str | None = None,
         trace_id: str | None = None,
+        max_open: int | None = None,
     ) -> Run:
         """Queue a run of `task` (any app's). Same `key` → the same run back (`run.deduplicated`).
+
+        max_open  refuse the trigger when this client already has that many OPEN runs (queued or
+                  running) of this task: raises `LimitReached`, nothing is queued. Needs `client_id`.
+                  The server checks and queues under one lock, so two triggers at the same instant
+                  can't both get past the limit. A trigger that dedups to an existing run is never
+                  refused. Check `jobs.supports("max_open")` if the server might be older.
+
+                      from pamfilico_jobs import jobs, LimitReached
+
+                      try:
+                          jobs.trigger("shop.emails.send", {"id": 7}, client_id=shop_id,
+                                       key=f"email:7", max_open=20)       # at most 20 waiting per shop
+                      except LimitReached:
+                          pass                                            # full: try on the next tick
 
         delay   "30s" / "10m" / seconds: not claimable before then
         run_at  a datetime (or ISO string): not claimable before that moment
@@ -217,7 +237,8 @@ class Jobs:
         """
         if self.inline:
             return self._inline_runner().trigger(
-                task, input, client_id=client_id, subject=subject, user_id=user_id, key=key, parent_run_id=parent_run_id
+                task, input, client_id=client_id, subject=subject, user_id=user_id, key=key, parent_run_id=parent_run_id,
+                max_open=max_open,
             )
         body = {
             "task": task,
@@ -232,6 +253,10 @@ class Jobs:
             "parent_run_id": parent_run_id,
             "trace_id": trace_id,
         }
+        if max_open is not None:
+            if client_id is None:
+                raise ValueError("max_open needs a client_id: the limit is per client")
+            body["max_open"] = int(max_open)
         ctx = _ctx.current()
         if ctx is not None and not parent_run_id:
             # Triggered from inside a task: the new run joins this run's trace.
@@ -345,6 +370,27 @@ class Jobs:
 
     def whoami(self) -> dict:
         return self.http.request("GET", "/whoami", attempts=3)["data"]
+
+    def supports(self, feature: str) -> bool:
+        """Does the jobs server you are talking to support ``feature``? e.g. ``"max_open"``.
+
+        Asks the server once (``/whoami`` → ``features``) and remembers the answer. An older server
+        that does not list features answers False for everything. Inline mode supports everything
+        the SDK implements.
+
+            if jobs.supports("max_open"):
+                jobs.trigger(task, inp, client_id=cid, max_open=10)
+            else:
+                ...  # count yourself: len(jobs.runs(task=task, client_id=cid, status="queued,running"))
+        """
+        if self.inline:
+            return feature in INLINE_FEATURES
+        if self._features is None:
+            try:
+                self._features = set(self.whoami().get("features") or [])
+            except Exception:  # noqa: BLE001 — unknown = unsupported; do not cache a failure
+                return False
+        return feature in self._features
 
     # ── children (inside a task) ───────────────────────────────────────────────────────────
 

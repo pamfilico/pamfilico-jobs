@@ -24,6 +24,8 @@ Python 3.10+. One dependency (`requests`); `croniter` is optional (validates cro
 2. [Declaring tasks](#2-declaring-tasks)
 3. [Inside a task: `ctx`](#3-inside-a-task-ctx)
 4. [Starting and reading runs](#4-starting-and-reading-runs)
+   - [Limit how many are waiting per client: `max_open`](#limit-how-many-are-waiting-per-client-max_open)
+   - [Tutorial: a self-limiting feeder](#tutorial-a-self-limiting-feeder)
 5. [Children and events: work across apps](#5-children-and-events-work-across-apps)
 6. [Idempotency: which tasks may run twice](#6-idempotency-which-tasks-may-run-twice)
 7. [Time to live](#7-time-to-live)
@@ -173,6 +175,7 @@ run = jobs.trigger(
     priority=5,
     delay="10m",                    # or run_at=datetime(...)
     trace_id=None,                  # continue a trace from outside a task (§8)
+    max_open=None,                  # refuse if client_id already has this many open runs (below)
 )
 run.id, run.status, run.deduplicated
 
@@ -193,6 +196,88 @@ source_run_id, created_at, started_at, finished_at, duration_s, expires_at, need
 Statuses: `queued`, `running`, `done`, `failed`, `cancelled`. `error_type` says why: the exception
 class, `timeout`, `lease_expired`, `cancelled`, `expired` (queue TTL), `child_failed`,
 `outcome_unknown` (§6), `OutputTooLarge`.
+
+### Limit how many are waiting per client: `max_open`
+
+`max_open=N` says: **"queue this only if this client has fewer than N open runs of this task"**
+(open = `queued` or `running`). If it is full, jobs refuses and the SDK raises `LimitReached` —
+nothing is queued, nothing to clean up.
+
+```python
+from pamfilico_jobs import jobs, LimitReached
+
+try:
+    jobs.trigger("shop.emails.send", {"email_id": 7},
+                 client_id="shop-42", key="email:7",
+                 max_open=20)                 # at most 20 waiting for shop-42
+except LimitReached:
+    pass                                      # full right now: try again on the next tick
+```
+
+- The server **counts and queues in one locked step**, so two triggers at the same instant cannot
+  both get past the limit (a count-then-trigger in your own code can).
+- It is **per client**: `client_id` is required. Different clients never block each other.
+- A trigger that **dedups** (same `key`, or `one_open_per` finds the open run) is never refused —
+  it adds nothing to the queue.
+- `concurrency=` on the task is different: that limits how many RUN at once across everyone.
+  `max_open` limits how many one client may have WAITING.
+
+Older servers do not know `max_open`. Ask first when you are not sure:
+
+```python
+if jobs.supports("max_open"):          # asks the server once (/whoami → features), then remembers
+    jobs.trigger(task, inp, client_id=cid, max_open=10)
+else:
+    open_now = len(jobs.runs(task=task, client_id=cid, status="queued,running", limit=11))
+    if open_now < 10:
+        jobs.trigger(task, inp, client_id=cid)
+```
+
+### Tutorial: a self-limiting feeder
+
+The pattern for "keep at most N things waiting per client, and keep it topped up": a cron that
+feeds, a worker task that does the work, and `max_open` as the brake. (This is how advert.cafe runs
+its Serper searches: `core.serper.tick` feeds `core.serper.run`.)
+
+```python
+from pamfilico_jobs import jobs, LimitReached
+
+LIMIT = 5                                              # per client; could be read from the client row
+
+# 1. The worker: does ONE thing. concurrency=1 → one at a time across every worker.
+@jobs.task("shop.search.run", fair_by="client_id", one_open_per="subject",
+           concurrency=1, idempotent=False, timeout="5m")
+def search_one(inp, ctx):
+    term = Term.get(inp["term_id"])
+    results = call_the_paid_api(term.query)            # costs money → idempotent=False (no auto-retry)
+    save(term, results)
+    term.status = "done"                               # mark done INSIDE the run
+    return {"saved": len(results)}
+
+# 2. The feeder: every 5 seconds, top each client up to LIMIT.
+@jobs.task("shop.search.tick", cron_string="*/5 * * * * *", timeout="1m", retries=0)
+def tick(inp, ctx):
+    for client in clients_switched_on():
+        for term in client.terms_not_done(limit=LIMIT):
+            try:
+                jobs.trigger("shop.search.run", {"term_id": term.id},
+                             client_id=client.id,
+                             subject=f"search:{term.id}",          # one open run per term
+                             key=f"search:{term.id}:{today()}",    # never twice a day by accident
+                             max_open=LIMIT)                       # the brake
+            except LimitReached:
+                break                                              # this client is full: next client
+            term.status = "queued"                                 # mark AFTER jobs accepted it
+```
+
+Three rules that keep it clean:
+
+1. **Trigger first, mark after.** Stamp your row `queued` only when the trigger returned. A refused or
+   failed trigger then leaves the row as it was — never a "queued" row with no run behind it.
+2. **The worker marks done.** The run's own code writes the final status, so the row and the run can
+   never disagree for long.
+3. **The queue is jobs.** "How many are waiting?" is
+   `len(jobs.runs(task="shop.search.run", client_id=cid, status="queued,running"))` — exact.
 
 ## 5. Children and events: work across apps
 
@@ -349,6 +434,7 @@ directly too.
 |---|---|
 | `JobsError(status, code, message)` | jobs said no: `unauthorized`, `scope`, `unknown_app`, `bad_task_name`, `key_required`, `not_found`, `too_large`, … |
 | `JobsUnavailable` | network error, timeout, 5xx (a `JobsError` with code `unavailable`) |
+| `LimitReached` | a trigger with `max_open` found the client full (a `JobsError`, 409 `limit_reached`); nothing was queued |
 | `NonRetryable` | raise it in a task to fail without retries |
 | `Cancelled` | raised by `ctx.raise_if_cancelled()` |
 | `RunFailed` / `ChildRunFailed` | a run you waited for did not finish `done` (`.run` has it) |

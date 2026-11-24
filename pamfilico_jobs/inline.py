@@ -15,7 +15,7 @@ from datetime import datetime, timezone
 
 from pamfilico_jobs import context as _ctx
 from pamfilico_jobs.context import Context
-from pamfilico_jobs.errors import ChildRunFailed, JobsError
+from pamfilico_jobs.errors import ChildRunFailed, JobsError, LimitReached
 from pamfilico_jobs.run import Run
 
 
@@ -98,7 +98,7 @@ class InlineRunner:
             _ctx._current.reset(token)
         return run
 
-    def trigger(self, task, input=None, *, client_id=None, subject=None, user_id=None, key=None, parent_run_id=None, trigger_kind=None):
+    def trigger(self, task, input=None, *, client_id=None, subject=None, user_id=None, key=None, parent_run_id=None, trigger_kind=None, max_open=None):
         tdef = self.jobs.registry.get(task)
         if tdef is not None and tdef.require_key and key is None and not parent_run_id:
             raise JobsError(400, "key_required", f"{task} is not idempotent: pass an idempotency key")
@@ -106,6 +106,16 @@ class InlineRunner:
             existing = dict(self.store[self.keys[(task, key)]])
             existing["deduplicated"] = True
             return Run(existing)
+        if max_open is not None:
+            if client_id is None:
+                raise ValueError("max_open needs a client_id: the limit is per client")
+            # Inline runs finish inside trigger(), so "open" is only what is running right now
+            # (a task triggering its own kind for the same client from inside itself).
+            open_now = sum(1 for r in self.store.values()
+                           if r.get("task") == task and r.get("client_id") == str(client_id)
+                           and r.get("status") in ("queued", "running"))
+            if open_now >= int(max_open):
+                raise LimitReached(f"{task}: client {client_id} already has {open_now} open run(s) (max_open {max_open})")
         run = self._new(
             task, input, client_id=client_id, subject=subject, user_id=user_id, key=key,
             parent_run_id=parent_run_id, trigger_kind=trigger_kind or ("child" if parent_run_id else "api"),
