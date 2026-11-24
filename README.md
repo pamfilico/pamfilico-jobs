@@ -10,8 +10,8 @@ children in other apps) in one console.
 your dependencies and your database. jobs never runs your code and never stores your business data.
 
 ```bash
-poetry add git+https://github.com/pamfilico/pamfilico-jobs.git#v0.2.2
-# or: pip install "pamfilico-jobs @ git+https://github.com/pamfilico/pamfilico-jobs.git@v0.2.2"
+poetry add git+https://github.com/pamfilico/pamfilico-jobs.git#v0.2.3
+# or: pip install "pamfilico-jobs @ git+https://github.com/pamfilico/pamfilico-jobs.git@v0.2.3"
 ```
 
 Python 3.10+. One dependency (`requests`); `croniter` is optional (validates crons locally).
@@ -147,6 +147,7 @@ jobs.wait(run.id, timeout=60)                      # long-polls; raise_on_failur
 jobs.runs(task="core.reports.*", status="failed", client_id="c1", limit=50)
 jobs.logs(run.id)                                  # queued, claimed, attempt_failed, retry_scheduled, done …
 jobs.cancel(run.id)                                # queued: now; running: the task sees ctx.cancelled()
+jobs.purge(task="core.signals.run", client_id="c1")  # cancel every QUEUED run that matches; returns the count
 jobs.retry(run.id)                                 # a NEW run with retry_of = the old one
 ```
 

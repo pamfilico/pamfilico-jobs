@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.2.3
+- `purge(task=, client_id=, subject=)`: cancel this app's queued runs in one call (`*` allowed in
+  `task` and `subject`). Running runs are left alone; returns how many were cancelled.
+
 ## 0.2.2
 - README rewritten as a complete reference (every option, `ctx`, errors, configuration).
 - `py.typed`: the package ships its type hints.

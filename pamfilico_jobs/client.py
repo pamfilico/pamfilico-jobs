@@ -275,6 +275,15 @@ class Jobs:
             return self._inline_runner().get(run_id)
         return Run(self.http.request("POST", f"/runs/{run_id}/cancel", attempts=3)["data"])
 
+    def purge(self, task: str | None = None, client_id: str | None = None, subject: str | None = None) -> int:
+        """Cancel this app's QUEUED runs (optionally one task and one subject, `*` allowed in both,
+        and one client). Running runs are left alone. Returns how many were cancelled; call again if
+        it returns 5000."""
+        if self.inline:
+            return 0
+        body = {k: v for k, v in (("task", task), ("client_id", client_id), ("subject", subject)) if v}
+        return int(self.http.request("POST", "/runs/purge", json_body=body)["data"]["cancelled"])
+
     def retry(self, run_id: str, input: dict | None = None) -> Run:
         """A NEW run of the same task and input (or `input`), with `retry_of` = the old run."""
         if self.inline:
