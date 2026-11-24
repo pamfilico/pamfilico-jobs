@@ -1,11 +1,14 @@
 from __future__ import annotations
 
 import inspect
+import logging
 import re
 from dataclasses import dataclass, field
 from typing import Callable
 
 from pamfilico_jobs.durations import seconds
+
+logger = logging.getLogger("pamfilico_jobs.tasks")
 
 TASK_NAME = re.compile(r"^[a-z][a-z0-9_]*(\.[a-z0-9_][a-z0-9_\-]*)+$")
 EVENT_PATTERN = re.compile(r"^[a-z][a-z0-9_]*(\.[a-z0-9_\-*]+)+$")
@@ -15,7 +18,13 @@ EVENT_PATTERN = re.compile(r"^[a-z][a-z0-9_]*(\.[a-z0-9_\-*]+)+$")
 class TaskDef:
     name: str
     fn: Callable
+    #: A fixed schedule (``cron_string=``).
     cron: str | None = None
+    #: A schedule read at every registration (``cron_callable=``): returns a cron string, or None
+    #: for "no schedule". See ``current_cron``.
+    cron_callable: Callable[[], str | None] | None = None
+    #: The last cron string ``cron_callable`` returned that was valid (kept when it fails).
+    _last_good_cron: str | None = None
     on_events: list = field(default_factory=list)
     fair_by: str | None = None
     one_open_per: str | None = None
@@ -52,10 +61,36 @@ class TaskDef:
             return self.fn(inp)
         return self.fn()
 
+    def current_cron(self) -> str | None:
+        """The schedule to register NOW.
+
+        ``cron_string`` → that string, always. ``cron_callable`` → whatever it returns this time
+        (the worker asks again at every registration, i.e. every minute). If the callable raises or
+        returns something that is not a valid cron, the last good value is kept and a warning is
+        logged, so a bad setting can never silently delete the schedule.
+        """
+        if self.cron_callable is None:
+            return self.cron
+        try:
+            value = self.cron_callable()
+        except Exception as exc:  # noqa: BLE001 — a broken setting must not take the worker down
+            logger.warning("task %s: cron_callable raised %s; keeping %r", self.name, exc, self._last_good_cron)
+            return self._last_good_cron
+        if value is None:
+            self._last_good_cron = None
+            return None
+        value = str(value).strip()
+        if not _valid_cron(value):
+            logger.warning("task %s: cron_callable returned %r, not a cron; keeping %r",
+                           self.name, value, self._last_good_cron)
+            return self._last_good_cron
+        self._last_good_cron = value
+        return value
+
     def definition(self) -> dict:
         return {
             "name": self.name,
-            "cron": self.cron,
+            "cron": self.current_cron(),
             "on_events": list(self.on_events),
             "fair_by": self.fair_by,
             "one_open_per": self.one_open_per,
@@ -90,6 +125,16 @@ class Registry:
         return [t for n, t in sorted(self.tasks.items()) if t.app == app]
 
 
+def _valid_cron(value: str) -> bool:
+    """True when ``value`` is a cron expression. Without croniter installed only the shape is checked
+    (5 or 6 fields); the server validates it either way."""
+    try:
+        from croniter import croniter
+    except ImportError:
+        return len(value.split()) in (5, 6)
+    return bool(croniter.is_valid(value))
+
+
 def _qualname(fn) -> str:
     return f"{getattr(fn, '__module__', '?')}.{getattr(fn, '__qualname__', '?')}"
 
@@ -99,6 +144,8 @@ def make_task(
     fn: Callable,
     *,
     cron=None,
+    cron_string=None,
+    cron_callable=None,
     on_events=None,
     fair_by=None,
     one_open_per=None,
@@ -124,14 +171,16 @@ def make_task(
     for e in events:
         if not EVENT_PATTERN.match(e):
             raise ValueError(f"bad event name {e!r}: use <app>.<entity>.<past-tense>")
-    if cron is not None:
-        try:
-            from croniter import croniter  # optional: validated by the server either way
-
-            if not croniter.is_valid(cron):
-                raise ValueError(f"bad cron {cron!r}")
-        except ImportError:
-            pass
+    # `cron=` is the original name of `cron_string=` and still works.
+    if cron is not None and cron_string is not None:
+        raise ValueError("pass cron_string= (or its old name cron=), not both")
+    cron_string = cron_string if cron_string is not None else cron
+    if cron_string is not None and cron_callable is not None:
+        raise ValueError("pass cron_string= OR cron_callable=, not both")
+    if cron_callable is not None and not callable(cron_callable):
+        raise ValueError("cron_callable must be a function that returns a cron string (or None)")
+    if cron_string is not None and not _valid_cron(str(cron_string).strip()):
+        raise ValueError(f"bad cron {cron_string!r}")
     timeout_s = int(seconds(timeout) or 600)
     if retries is None:
         # A task that costs money is not retried unless you say so.
@@ -141,7 +190,8 @@ def make_task(
     return TaskDef(
         name=name,
         fn=fn,
-        cron=cron,
+        cron=str(cron_string).strip() if cron_string is not None else None,
+        cron_callable=cron_callable,
         on_events=events,
         fair_by=fair_by,
         one_open_per=one_open_per,

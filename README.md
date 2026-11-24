@@ -86,7 +86,8 @@ The function takes `(inp, ctx)`, `(inp)` or nothing, and may be `async`.
     concurrency=5,             # at most 5 running at once, across every worker
     labels={"gpu": "true"},    # only workers with these labels take it
     priority=0,                # higher first
-    cron=None,                 # "*/5 * * * *"; a 6th field is seconds
+    cron_string=None,          # fixed schedule: "*/5 * * * *"; a 6th field is seconds
+    cron_callable=None,        # OR a function returning the schedule, re-read every minute
     on_events=None,            # ["crawlfast.crawl.*"]: start a run per matching event
     idempotent=True,           # False = running it twice has a cost (§6)
     require_key=None,          # refuse triggers without a key (default: not idempotent)
@@ -100,11 +101,44 @@ def run(inp, ctx): ...
 |---|---|---|
 | `timeout` | `"10m"` | the attempt fails with `timeout`; a late result is dropped |
 | `retries` | `3` (`0` if not idempotent) | backoff default 10 s, 1 m, 5 m, 15 m, 1 h |
-| `cron` | — | ticks never overlap: a slow tick makes the next one a no-op. Switch crons off in the console |
+| `cron_string` | — | a fixed schedule. Ticks never overlap: a slow tick makes the next one a no-op. Switch crons off in the console. `cron=` is its old name and still works |
+| `cron_callable` | — | a schedule you can change without a deploy (see below). Use it instead of `cron_string`, never both |
 | `fair_by` | — | claiming is round robin between clients |
 | `one_open_per` | — | `"subject"` only |
 | `concurrency` | — | global per task: protect a shared API or a fragile service |
 | `labels` | — | route work to machines (`{"gpu": "true"}`) |
+
+### Schedules: fixed, or changeable without a deploy
+
+```python
+# 1. Fixed: always every 5 minutes.
+@jobs.task("shop.orders.sync", cron_string="*/5 * * * *")
+def sync(inp, ctx): ...
+
+# 2. Changeable: the worker calls how_often() every minute and jobs follows what it returns.
+def how_often() -> str | None:
+    minutes = Settings.get("sync_every_minutes")   # your own setting, e.g. a DB row
+    return f"*/{minutes} * * * *" if minutes else None   # None = no schedule
+
+@jobs.task("shop.orders.sync", cron_callable=how_often)
+def sync(inp, ctx): ...
+```
+
+- The function takes no arguments, must be cheap (every minute) and returns a cron string or `None`.
+- A change reaches jobs within a minute (the next re-registration).
+- If it raises, or returns something that is not a cron, the **last good schedule is kept** and a
+  warning is logged: a broken setting never deletes the schedule. `None` removes it on purpose.
+- It is one schedule per task (not per client). Inline mode (`PAMFILICO_JOBS_MODE=inline`) runs no
+  crons at all, either kind.
+
+| Cron | Means |
+|---|---|
+| `* * * * *` | every minute |
+| `*/5 * * * *` | every 5 minutes |
+| `17 * * * *` | every hour at :17 |
+| `0 6 * * *` | every day at 06:00 UTC |
+| `0 6 * * 1` | every Monday at 06:00 UTC |
+| `*/30 * * * * *` | every 30 seconds (6th field = seconds) |
 
 One function can serve two task names with different policies:
 

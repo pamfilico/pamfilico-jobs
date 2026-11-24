@@ -83,6 +83,8 @@ class Jobs:
         self,
         name: str,
         *,
+        cron_string: str | None = None,
+        cron_callable: Callable[[], str | None] | None = None,
         cron: str | None = None,
         on_events: Iterable[str] | str | None = None,
         fair_by: str | None = None,
@@ -101,8 +103,48 @@ class Jobs:
     ) -> Callable:
         """Declare a task. The function stays a plain function (call it directly in unit tests).
 
+        WHEN DOES IT RUN? Pick ONE of these (or none: then it only runs when you trigger it).
+
+        1. On a fixed schedule — ``cron_string``:
+
+            @jobs.task("shop.reports.daily", cron_string="0 6 * * *")      # every day at 06:00
+            def daily(inp, ctx): ...
+
+            @jobs.task("shop.orders.sync", cron_string="*/5 * * * *")      # every 5 minutes
+            def sync(inp, ctx): ...
+
+        2. On a schedule you can CHANGE without a deploy — ``cron_callable``: a function that
+           returns the cron string. The worker calls it every minute and jobs switches to whatever
+           it returns. Return None to switch the schedule off.
+
+            def how_often() -> str | None:
+                minutes = Settings.get("sync_every_minutes")     # e.g. read your own DB
+                if not minutes:
+                    return None                                  # None = do not run on a timer
+                return f"*/{minutes} * * * *"
+
+            @jobs.task("shop.orders.sync", cron_callable=how_often)
+            def sync(inp, ctx): ...
+
+           Rules for the function: no arguments, cheap (it runs every minute), returns a cron string
+           or None. If it raises or returns something that is not a cron, the last good schedule is
+           kept (and a warning is logged) — a broken setting never deletes the schedule.
+
+        3. When something happens — ``on_events`` (see below).
+
+        Cron strings in one line each:
+            "* * * * *"      every minute           "0 * * * *"      every hour, on the hour
+            "*/5 * * * *"    every 5 minutes        "0 6 * * *"      every day at 06:00 (UTC)
+            "17 * * * *"     every hour at :17      "0 6 * * 1"      every Monday at 06:00
+            "*/30 * * * * *" every 30 seconds (a 6th field = seconds)
+
+        Either way a scheduled run never overlaps the previous one: if a tick is still running when
+        the next is due, the next is skipped.
+
         name          <app>.<domain>.<action>; the app's worker runs every <app>.* task
-        cron          "*/5 * * * *" (a 6th field is seconds); runs never overlap
+        cron_string   a fixed schedule, e.g. "*/5 * * * *" (see 1)
+        cron_callable a function returning the schedule, re-read every minute (see 2)
+        cron          the old name of cron_string; still works
         on_events     event names (globs allowed) that start a run with the event payload as input
         fair_by       "client_id": one client's backlog can't starve the others
         one_open_per  "subject": never two open runs of this task for the same subject
@@ -125,6 +167,8 @@ class Jobs:
                 name,
                 fn,
                 cron=cron,
+                cron_string=cron_string,
+                cron_callable=cron_callable,
                 on_events=on_events,
                 fair_by=fair_by,
                 one_open_per=one_open_per,

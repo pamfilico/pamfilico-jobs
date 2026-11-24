@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.2.4
+- `cron_string=`: the fixed schedule (`cron=` is its old name and still works).
+- `cron_callable=`: a function returning the schedule (a cron string, or `None` for none). The worker
+  calls it at every registration (every minute), so a schedule can change without a deploy. If it
+  raises or returns an invalid cron, the last good schedule is kept and a warning is logged.
+- The two are exclusive: passing both (or `cron` with `cron_string`) raises at import time.
+
 ## 0.2.3
 - `purge(task=, client_id=, subject=)`: cancel this app's queued runs in one call (`*` allowed in
   `task` and `subject`). Running runs are left alone; returns how many were cancelled.
